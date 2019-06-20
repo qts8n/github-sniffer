@@ -8,22 +8,20 @@ const client = new discord.Client();
 
 client.on('ready', () => {
     console.log(`Logged in as ${client.user.tag}!`);
-    // Every 55 minutes - check for updates
-    const rule = new schedule.RecurrenceRule();
-    rule.minute = 55;
-    schedule.scheduleJob(rule, handler.checkForUpdates);
 });
 
 client.on('message', msg => {
-    const content = (msg.content || '').toLowerCase().trim().replace(/\s+/g, ' ');
-    if (!content.startsWith('!')) return;
-    if (content === '!ping') {
-        msg.reply('Pong!');
+    try {
+        handler.friendlyReply(msg);
+    } catch (err) {
+        if (!err.interrupted) throw err;
         return;
     }
-    const general = msg.channel.id;
-    msg.reply('Processed');
-    handler.handleMessage(content, msg.reply.bind(msg));
+    handler.handleMessage(msg.content, msg.reply.bind(msg));
 });
 
 client.login(config.TOKEN);
+
+const rule = new schedule.RecurrenceRule();
+rule.second = 10;
+schedule.scheduleJob(rule, handler.checkForUpdates.bind(this, client));
