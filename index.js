@@ -23,5 +23,5 @@ client.on('message', msg => {
 client.login(config.TOKEN);
 
 const rule = new schedule.RecurrenceRule();
-rule.second = 10;
+rule.minute = config.MINUTE_INTERVAL;
 schedule.scheduleJob(rule, handler.checkForUpdates.bind(this, client));

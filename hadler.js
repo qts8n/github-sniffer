@@ -14,25 +14,29 @@ const refreshWatchList = callback => {
     fs.readFile(config.WATCH_LIST, config.ENCODING, (error, data) => {
         if (error) return callback('Can\'t read watch list', null);
         let records;
-        try {
-            records = JSON.parse(data);
-        } catch (error) {
-            records = [];
-        }
-        if (!Array.isArray(records)) {
-            records = [];
-        }
+        try { records = JSON.parse(data); }
+        catch (error) { records = []; }
+        if (!Array.isArray(records)) records = [];
         callback(null, records);
     });
 };
 
-const addToWatchList = (record, responseHandler) => {
+const saveRecords = records =>
+    fs.writeFile(config.WATCH_LIST, JSON.stringify(records), config.ENCODING, console.error);
+
+const manageWatchList = responseHandler => callback => {
     refreshWatchList((error, records) => {
         if (error) return responseHandler(error);
+        callback(records);
+    });
+};
+
+const addToWatchList = (record, responseHandler) => {
+    manageWatchList(responseHandler)(records => {
         if (records.find(oldRecord => oldRecord.url === record.url))
             return responseHandler('Watch list record already exists');
         records.push(record);
-        fs.writeFile(config.WATCH_LIST, JSON.stringify(records), config.ENCODING, console.error);
+        saveRecords(records);
     });
 };
 
@@ -52,7 +56,7 @@ const formatGithubResponse = resp => {
         });
     });
     return formatted;
-}
+};
 
 // Adding user to a watch list
 const addUser = (url, responseHandler) => {
@@ -72,32 +76,26 @@ const addUser = (url, responseHandler) => {
 };
 
 // Removing user from a watch list
-const removeUser = (url, responseHandler) => {
-    refreshWatchList((error, records) => {
-        if (error) return responseHandler(error);
-        const filtered = records.filter(record => record.url !== url);
-        fs.writeFile(config.WATCH_LIST, JSON.stringify(filtered), config.ENCODING, console.error);
-    });
-};
+const removeUser = (url, responseHandler) =>
+    manageWatchList(responseHandler)(records => saveRecords(records.filter(r => r.url !== url)));
 
 // Get full watchlist
 const getWatchList = responseHandler => {
-    refreshWatchList((error, records) => {
-        if (error) return responseHandler(error);
+    manageWatchList(responseHandler)(records => {
         if (records.length === 0) return responseHandler('Current watchlist is empty!');
-        let reply = 'Current watchlist:\n';
-        records.forEach((record, it) => {
-            reply += `${it + 1}. ${record.username}: ${record.url}\n`;
-        });
-        responseHandler(reply);
+        responseHandler(records.reduce(
+            (acc, r, it) => acc + `${it + 1}. ${r.username}: ${r.url}\n`,
+            'Current watchlist:\n'
+        ));
     });
-}
+};
 
 // Bot allowed commands
 const BOT_COMMANDS = {
     add: addUser,
     remove: removeUser
 };
+
 // Allowed links pattern
 // Handles links like `https://github.com/qts8n`
 const LINK_PATTERN = /^https\:\/\/github\.com\/[a-z0-9]+$/i;
@@ -121,7 +119,6 @@ const handleMessage = (msg, responseHandler) => {
     }
 };
 
-
 const friendlyReply = msg => {
     msg.content = (msg.content || '').toLowerCase().trim().replace(/\s+/g, ' ');
     if (!msg.content.startsWith('!')) throw new Interrupt();
@@ -130,12 +127,8 @@ const friendlyReply = msg => {
         case '!ping':
             msg.reply('Pong!');
             throw new Interrupt();
-        case '!add':
-            msg.reply('Adding to watchlist...');
-            break;
-        case '!remove':
-            msg.reply('Removing from watchlist...');
-            break;
+        case '!add': break;
+        case '!remove': break;
         case '!list':
             getWatchList(msg.reply.bind(msg));
             throw new Interrupt();
@@ -148,24 +141,19 @@ const friendlyReply = msg => {
 const getUpdatedRepos = (oldRepos, newRepos) => {
     let updated = [];
     newRepos.forEach(newRepo => {
-        const correspondingRepo = oldRepos.find(oldRepo => oldRepo.name === newRepo.name);
-        // `correspondingRepo.updated_at` - old repo update date
-        // `newRepo.updated_at` - new repo udate date
-        if (moment(correspondingRepo.updated_at).isBefore(moment(newRepo.updated_at))) {
-            updated.push(newRepo);
-        }
+        const oldDate = oldRepos.find(oldRepo => oldRepo.name === newRepo.name).updated_at;
+        const newDate = newRepo.updated_at;
+        if (moment(oldDate).isBefore(newDate)) updated.push(newRepo);
     });
-
     return updated;
 };
 
 const notifyAboutUpdates = (channel, results) => {
     let notification = '@everyone, Updates since last check!\n';
-
     let it = 1;
     results.forEach(result => {
         result.updated.forEach(update => {
-            notification += `${it}. ${result.username}'s ${update.name}: ${update.url}\n`;
+            notification += `${it}. ${result.username}-${update.name}: ${update.url}\n`;
             it++;
         });
     });
@@ -173,41 +161,32 @@ const notifyAboutUpdates = (channel, results) => {
 };
 
 const checkForUpdates = client => {
-    console.log('Schedule job started...')
-    refreshWatchList((error, records) => {
-        if (error) return console.error(error);
+    manageWatchList(console.error)(records => {
         let promises = [];
         records.forEach(record => {
             promises.push(getUserRepos(getUser(record.url)));
         });
         Promise.all(promises).then(users => {
-            let results = [];
-            let newRecords = [];
+            let results = [], newRecords = [];
             users.forEach(resp => {
                 const username = resp.data[0].owner.login;
                 const currentRepos = formatGithubResponse(resp);
-                const correspondingRecord = records.find(record => record.username === username);
+                const record = records.find(record => record.username === username);
                 newRecords.push({
                     username,
-                    url: correspondingRecord.url,
+                    url: record.url,
                     repos: currentRepos,
                     count: currentRepos.length
                 });
-
-                // `currentRepos` - new repos of `username`
-                // `correspondingRecord.repos` - known (old) repos of `username`
-                const updated = getUpdatedRepos(correspondingRecord.repos, currentRepos);
-                if (updated.length !== 0) {
-                    results.push({ username, updated });
-                }
+                const updated = getUpdatedRepos(record.repos, currentRepos);
+                if (updated.length === 0) return;
+                results.push({ username, updated });
             });
-            if (results.length !== 0) {
-                console.log('Changes found...');
-                notifyAboutUpdates(client.channels.get(config.CHANNEL_ID, results));
-                fs.writeFile(config.WATCH_LIST, JSON.stringify(newRecords), config.ENCODING, console.error);
-            }
-            console.log('Schedule job done!');
-        });
+            if (results.length === 0) return;
+            console.log('Updating records...');
+            notifyAboutUpdates(client.channels.get(config.CHANNEL_ID, results));
+            saveRecords(newRecords);
+        }).catch(console.error);
     });
 };
 
