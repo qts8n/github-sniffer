@@ -4,8 +4,9 @@
   "description": "A simple discord bot that sniffs github profiles' repositories",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon index.js"
+    "build": "babel lib -d dist",
+    "start": "npm run build && node dist/index.js",
+    "dev": "npm run build && nodemon --ignore watchlist.json --exec babel-node lib/index.js"
   },
   "keywords": [
     "sniffer"
@@ -19,6 +20,10 @@
     "node-schedule": "^1.3.2"
   },
   "devDependencies": {
+    "@babel/cli": "^7.4.4",
+    "@babel/core": "^7.4.5",
+    "@babel/node": "^7.4.5",
+    "@babel/preset-env": "^7.4.5",
     "nodemon": "^1.19.0"
   }
 }

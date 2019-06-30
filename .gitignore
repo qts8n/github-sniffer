@@ -1,3 +1,6 @@
 node_modules
 watchlist.json
 config.js
+config.mjs
+dist/*
+!dist/.gitkeep
